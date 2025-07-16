@@ -6,6 +6,7 @@ import { useState, useRef, useCallback, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
+import html2canvas from "html2canvas"
 
 interface CheckboxGrid {
   rows: number
@@ -21,6 +22,7 @@ export default function CheckboxSketchTool() {
   const [exportSize, setExportSize] = useState<number>(8)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const checkboxGridRef = useRef<HTMLDivElement>(null)
 
   const processImage = useCallback(
     (file: File) => {
@@ -212,6 +214,31 @@ export default function CheckboxSketchTool() {
     })
   }, [grid, exportSize])
 
+  const saveAsCheckboxImage = useCallback(async () => {
+    if (!grid || !checkboxGridRef.current) return
+
+    try {
+      const canvas = await html2canvas(checkboxGridRef.current, {
+        backgroundColor: "#f9f9f9",
+        scale: 2, // Higher resolution
+        useCORS: true,
+      })
+
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement("a")
+          a.href = url
+          a.download = "checkbox-sketch-checkboxes.png"
+          a.click()
+          URL.revokeObjectURL(url)
+        }
+      })
+    } catch (error) {
+      console.error("Error capturing checkbox image:", error)
+    }
+  }, [grid])
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file && file.type.startsWith("image/")) {
@@ -305,7 +332,10 @@ export default function CheckboxSketchTool() {
                   </select>
                 </div>
                 <Button onClick={saveAsImage} variant="outline" size="sm">
-                  Save as Image
+                  Save as Pixels
+                </Button>
+                <Button onClick={saveAsCheckboxImage} variant="outline" size="sm">
+                  Save as Checkboxes
                 </Button>
               </div>
             )}
@@ -319,6 +349,7 @@ export default function CheckboxSketchTool() {
             <h2 className="text-xl font-semibold mb-4 text-center">Checkbox Sketch</h2>
             <div className="overflow-auto">
               <div
+                ref={checkboxGridRef}
                 className="inline-grid gap-0 mx-auto border"
                 style={{
                   gridTemplateColumns: `repeat(${grid.cols}, 1fr)`,
