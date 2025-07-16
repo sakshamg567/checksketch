@@ -15,11 +15,13 @@ interface CheckboxGrid {
 }
 
 export default function CheckboxSketchTool() {
-  const [resolution, setResolution] = useState<number>(50)
-  const [threshold, setThreshold] = useState<number>(128)
+  const [resolution, setResolution] = useState<number>(80)
+  const [threshold, setThreshold] = useState<number>(150)
   const [grid, setGrid] = useState<CheckboxGrid | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [exportSize, setExportSize] = useState<number>(8)
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+  const [maintainAspectRatio, setMaintainAspectRatio] = useState<boolean>(true)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const checkboxGridRef = useRef<HTMLDivElement>(null)
@@ -40,31 +42,54 @@ export default function CheckboxSketchTool() {
         const ctx = canvas.getContext("2d")
         if (!ctx) return
 
-        // Use selected resolution
-        canvas.width = resolution
-        canvas.height = resolution
+        let canvasWidth = resolution
+        let canvasHeight = resolution
+
+        if (maintainAspectRatio) {
+          // Calculate dimensions to maintain aspect ratio
+          const imgAspectRatio = img.width / img.height
+          const targetAspectRatio = 1 // square
+
+          if (imgAspectRatio > targetAspectRatio) {
+            // Image is wider than square
+            canvasWidth = resolution
+            canvasHeight = Math.round(resolution / imgAspectRatio)
+          } else {
+            // Image is taller than square
+            canvasWidth = Math.round(resolution * imgAspectRatio)
+            canvasHeight = resolution
+          }
+        }
+
+        // Set canvas size
+        canvas.width = canvasWidth
+        canvas.height = canvasHeight
+
+        // Clear canvas with white background
+        ctx.fillStyle = "#ffffff"
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight)
 
         // Draw and scale image to canvas
-        ctx.drawImage(img, 0, 0, resolution, resolution)
+        ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight)
 
         // Get image data
-        const imageData = ctx.getImageData(0, 0, resolution, resolution)
+        const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight)
         const data = imageData.data
 
         // Convert to checkbox grid (inverted logic)
         const newGrid: boolean[][] = []
 
-        for (let y = 0; y < resolution; y++) {
+        for (let y = 0; y < canvasHeight; y++) {
           const row: boolean[] = []
-          for (let x = 0; x < resolution; x++) {
-            const index = (y * resolution + x) * 4
+          for (let x = 0; x < canvasWidth; x++) {
+            const index = (y * canvasWidth + x) * 4
             const r = data[index]
             const g = data[index + 1]
             const b = data[index + 2]
 
             // Convert to grayscale and determine if it's dark (inverted)
             const grayscale = (r + g + b) / 3
-            const isDark = grayscale < threshold // Use threshold state
+            const isDark = grayscale < threshold
 
             row.push(isDark)
           }
@@ -72,8 +97,8 @@ export default function CheckboxSketchTool() {
         }
 
         setGrid({
-          rows: resolution,
-          cols: resolution,
+          rows: canvasHeight,
+          cols: canvasWidth,
           data: newGrid,
         })
         setIsProcessing(false)
@@ -81,7 +106,7 @@ export default function CheckboxSketchTool() {
 
       img.src = URL.createObjectURL(file)
     },
-    [resolution, threshold],
+    [resolution, threshold, maintainAspectRatio],
   )
 
   const reprocessImage = useCallback(() => {
@@ -92,16 +117,16 @@ export default function CheckboxSketchTool() {
     if (!ctx) return
 
     // Get existing image data
-    const imageData = ctx.getImageData(0, 0, resolution, resolution)
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
     const data = imageData.data
 
     // Convert to checkbox grid with new threshold
     const newGrid: boolean[][] = []
 
-    for (let y = 0; y < resolution; y++) {
+    for (let y = 0; y < canvas.height; y++) {
       const row: boolean[] = []
-      for (let x = 0; x < resolution; x++) {
-        const index = (y * resolution + x) * 4
+      for (let x = 0; x < canvas.width; x++) {
+        const index = (y * canvas.width + x) * 4
         const r = data[index]
         const g = data[index + 1]
         const b = data[index + 2]
@@ -115,11 +140,11 @@ export default function CheckboxSketchTool() {
     }
 
     setGrid({
-      rows: resolution,
-      cols: resolution,
+      rows: canvas.height,
+      cols: canvas.width,
       data: newGrid,
     })
-  }, [resolution, threshold])
+  }, [threshold])
 
   const toggleCheckbox = useCallback((row: number, col: number) => {
     setGrid((prevGrid) => {
@@ -151,6 +176,7 @@ export default function CheckboxSketchTool() {
 
   const clearGrid = useCallback(() => {
     setGrid(null)
+    setUploadedFile(null)
   }, [])
 
   const autoOptimizeThreshold = useCallback(() => {
@@ -196,7 +222,7 @@ export default function CheckboxSketchTool() {
     // Draw checked boxes
     ctx.fillStyle = "#000000"
     for (let y = 0; y < grid.rows; y++) {
-      for (let x = 0; y < grid.cols; x++) {
+      for (let x = 0; x < grid.cols; x++) {
         if (grid.data[y][x]) {
           ctx.fillRect(x * exportSize, y * exportSize, exportSize, exportSize)
         }
@@ -244,6 +270,7 @@ export default function CheckboxSketchTool() {
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file && file.type.startsWith("image/")) {
+      setUploadedFile(file)
       processImage(file)
     }
   }
@@ -258,64 +285,90 @@ export default function CheckboxSketchTool() {
     }
   }, [threshold, reprocessImage])
 
-  // Add this after the existing useEffect
+  // Add new useEffect to reprocess image when resolution changes
   useEffect(() => {
-    // Create a placeholder pattern on initial load
+    if (uploadedFile) {
+      processImage(uploadedFile)
+    }
+  }, [resolution, uploadedFile, processImage])
+
+  // Load rickroll.jpg as default placeholder
+  useEffect(() => {
     if (!grid) {
-      const placeholderSize = 30
-      const placeholderGrid: boolean[][] = []
+      const img = new Image()
+      img.crossOrigin = "anonymous"
 
-      // Create a simple smiley face pattern
-      for (let y = 0; y < placeholderSize; y++) {
-        const row: boolean[] = []
-        for (let x = 0; x < placeholderSize; x++) {
-          let isChecked = false
+      img.onload = () => {
+        const canvas = canvasRef.current
+        if (!canvas) return
 
-          // Face outline (circle)
-          const centerX = placeholderSize / 2
-          const centerY = placeholderSize / 2
-          const radius = 12
-          const distance = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2)
+        const ctx = canvas.getContext("2d")
+        if (!ctx) return
 
-          // Face outline
-          if (distance >= radius - 1 && distance <= radius + 1) {
-            isChecked = true
+        let canvasWidth = resolution
+        let canvasHeight = resolution
+
+        if (maintainAspectRatio) {
+          // Calculate dimensions to maintain aspect ratio
+          const imgAspectRatio = img.width / img.height
+          const targetAspectRatio = 1 // square
+
+          if (imgAspectRatio > targetAspectRatio) {
+            // Image is wider than square
+            canvasWidth = resolution
+            canvasHeight = Math.round(resolution / imgAspectRatio)
+          } else {
+            // Image is taller than square
+            canvasWidth = Math.round(resolution * imgAspectRatio)
+            canvasHeight = resolution
           }
-
-          // Left eye
-          if (x >= 10 && x <= 12 && y >= 10 && y <= 12) {
-            isChecked = true
-          }
-
-          // Right eye
-          if (x >= 17 && x <= 19 && y >= 10 && y <= 12) {
-            isChecked = true
-          }
-
-          // Smile
-          if (y >= 18 && y <= 20) {
-            if ((x >= 10 && x <= 11) || (x >= 18 && x <= 19)) {
-              isChecked = true
-            }
-          }
-          if (y >= 20 && y <= 21) {
-            if (x >= 12 && x <= 17) {
-              isChecked = true
-            }
-          }
-
-          row.push(isChecked)
         }
-        placeholderGrid.push(row)
+
+        // Set canvas size
+        canvas.width = canvasWidth
+        canvas.height = canvasHeight
+
+        // Clear canvas with white background
+        ctx.fillStyle = "#ffffff"
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight)
+
+        // Draw and scale image to canvas
+        ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight)
+
+        // Get image data
+        const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight)
+        const data = imageData.data
+
+        // Convert to checkbox grid (inverted logic)
+        const newGrid: boolean[][] = []
+
+        for (let y = 0; y < canvasHeight; y++) {
+          const row: boolean[] = []
+          for (let x = 0; x < canvasWidth; x++) {
+            const index = (y * canvasWidth + x) * 4
+            const r = data[index]
+            const g = data[index + 1]
+            const b = data[index + 2]
+
+            // Convert to grayscale and determine if it's dark (inverted)
+            const grayscale = (r + g + b) / 3
+            const isDark = grayscale < threshold
+
+            row.push(isDark)
+          }
+          newGrid.push(row)
+        }
+
+        setGrid({
+          rows: canvasHeight,
+          cols: canvasWidth,
+          data: newGrid,
+        })
       }
 
-      setGrid({
-        rows: placeholderSize,
-        cols: placeholderSize,
-        data: placeholderGrid,
-      })
+      img.src = "/rickroll.jpg"
     }
-  }, [])
+  }, [resolution, threshold, maintainAspectRatio])
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
@@ -340,6 +393,26 @@ export default function CheckboxSketchTool() {
                 </Button>
                 <Button variant={resolution === 80 ? "default" : "outline"} size="sm" onClick={() => setResolution(80)}>
                   High (80×80)
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-center gap-2">
+              <label className="text-sm font-medium">Aspect Ratio</label>
+              <div className="flex gap-2">
+                <Button
+                  variant={!maintainAspectRatio ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setMaintainAspectRatio(false)}
+                >
+                  Square
+                </Button>
+                <Button
+                  variant={maintainAspectRatio ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setMaintainAspectRatio(true)}
+                >
+                  Original
                 </Button>
               </div>
             </div>
