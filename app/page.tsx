@@ -27,6 +27,8 @@ export default function CheckboxSketchTool() {
   const processImage = useCallback(
     (file: File) => {
       setIsProcessing(true)
+      // Clear any existing grid (including placeholder)
+      setGrid(null)
 
       const img = new Image()
       img.crossOrigin = "anonymous"
@@ -194,7 +196,7 @@ export default function CheckboxSketchTool() {
     // Draw checked boxes
     ctx.fillStyle = "#000000"
     for (let y = 0; y < grid.rows; y++) {
-      for (let x = 0; x < grid.cols; x++) {
+      for (let x = 0; y < grid.cols; x++) {
         if (grid.data[y][x]) {
           ctx.fillRect(x * exportSize, y * exportSize, exportSize, exportSize)
         }
@@ -255,6 +257,65 @@ export default function CheckboxSketchTool() {
       reprocessImage()
     }
   }, [threshold, reprocessImage])
+
+  // Add this after the existing useEffect
+  useEffect(() => {
+    // Create a placeholder pattern on initial load
+    if (!grid) {
+      const placeholderSize = 30
+      const placeholderGrid: boolean[][] = []
+
+      // Create a simple smiley face pattern
+      for (let y = 0; y < placeholderSize; y++) {
+        const row: boolean[] = []
+        for (let x = 0; x < placeholderSize; x++) {
+          let isChecked = false
+
+          // Face outline (circle)
+          const centerX = placeholderSize / 2
+          const centerY = placeholderSize / 2
+          const radius = 12
+          const distance = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2)
+
+          // Face outline
+          if (distance >= radius - 1 && distance <= radius + 1) {
+            isChecked = true
+          }
+
+          // Left eye
+          if (x >= 10 && x <= 12 && y >= 10 && y <= 12) {
+            isChecked = true
+          }
+
+          // Right eye
+          if (x >= 17 && x <= 19 && y >= 10 && y <= 12) {
+            isChecked = true
+          }
+
+          // Smile
+          if (y >= 18 && y <= 20) {
+            if ((x >= 10 && x <= 11) || (x >= 18 && x <= 19)) {
+              isChecked = true
+            }
+          }
+          if (y >= 20 && y <= 21) {
+            if (x >= 12 && x <= 17) {
+              isChecked = true
+            }
+          }
+
+          row.push(isChecked)
+        }
+        placeholderGrid.push(row)
+      }
+
+      setGrid({
+        rows: placeholderSize,
+        cols: placeholderSize,
+        data: placeholderGrid,
+      })
+    }
+  }, [])
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
@@ -348,31 +409,34 @@ export default function CheckboxSketchTool() {
           <Card className="p-6">
             <h2 className="text-xl font-semibold mb-4 text-center">Checkbox Sketch</h2>
             <div className="overflow-auto">
-              <div
-                ref={checkboxGridRef}
-                className="inline-grid gap-0 mx-auto border"
-                style={{
-                  gridTemplateColumns: `repeat(${grid.cols}, 1fr)`,
-                  maxWidth: "600px",
-                  backgroundColor: "#f9f9f9",
-                }}
-              >
-                {grid.data.map((row, rowIndex) =>
-                  row.map((isChecked, colIndex) => (
-                    <input
-                      key={`${rowIndex}-${colIndex}`}
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={() => toggleCheckbox(rowIndex, colIndex)}
-                      className="w-2 h-2 cursor-pointer hover:scale-110 transition-transform"
-                      style={{ margin: "0.5px" }}
-                    />
-                  )),
-                )}
+              <div className="flex justify-center">
+                <div
+                  ref={checkboxGridRef}
+                  className="inline-grid gap-0 border"
+                  style={{
+                    gridTemplateColumns: `repeat(${grid.cols}, 1fr)`,
+                    backgroundColor: "#f9f9f9",
+                  }}
+                >
+                  {grid.data.map((row, rowIndex) =>
+                    row.map((isChecked, colIndex) => (
+                      <input
+                        key={`${rowIndex}-${colIndex}`}
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleCheckbox(rowIndex, colIndex)}
+                        className="w-2 h-2 cursor-pointer hover:scale-110 transition-transform"
+                        style={{ margin: "0.5px" }}
+                      />
+                    )),
+                  )}
+                </div>
               </div>
             </div>
             <p className="text-sm text-gray-500 text-center mt-4">
-              Click checkboxes to manually edit • Checked = dark pixels, unchecked = background
+              {!canvasRef.current
+                ? "Example placeholder pattern • Upload an image to get started"
+                : "Click checkboxes to manually edit • Checked = dark pixels, unchecked = background"}
             </p>
           </Card>
         )}
