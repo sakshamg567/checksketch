@@ -279,22 +279,9 @@ export default function CheckboxSketchTool() {
     fileInputRef.current?.click()
   }
 
-  useEffect(() => {
-    if (grid && canvasRef.current) {
-      reprocessImage()
-    }
-  }, [threshold, reprocessImage])
-
-  // Add new useEffect to reprocess image when resolution changes
-  useEffect(() => {
-    if (uploadedFile) {
-      processImage(uploadedFile)
-    }
-  }, [resolution, uploadedFile, processImage])
-
   // Load rickroll.jpg as default placeholder
   useEffect(() => {
-    if (!grid) {
+    if (!grid && !uploadedFile) {
       const img = new Image()
       img.crossOrigin = "anonymous"
 
@@ -368,7 +355,53 @@ export default function CheckboxSketchTool() {
 
       img.src = "/rickroll.jpg"
     }
-  }, [resolution, threshold, maintainAspectRatio])
+  }, [resolution, maintainAspectRatio, uploadedFile]) // Removed threshold from dependencies
+
+  // Separate useEffect for threshold changes
+  useEffect(() => {
+    if (grid && canvasRef.current && !uploadedFile) {
+      // Only reprocess placeholder when threshold changes and no file is uploaded
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext("2d")
+      if (!ctx) return
+
+      // Get existing image data
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const data = imageData.data
+
+      // Convert to checkbox grid with new threshold
+      const newGrid: boolean[][] = []
+
+      for (let y = 0; y < canvas.height; y++) {
+        const row: boolean[] = []
+        for (let x = 0; x < canvas.width; x++) {
+          const index = (y * canvas.width + x) * 4
+          const r = data[index]
+          const g = data[index + 1]
+          const b = data[index + 2]
+
+          const grayscale = (r + g + b) / 3
+          const isDark = grayscale < threshold
+
+          row.push(isDark)
+        }
+        newGrid.push(row)
+      }
+
+      setGrid({
+        rows: canvas.height,
+        cols: canvas.width,
+        data: newGrid,
+      })
+    }
+  }, [threshold, uploadedFile])
+
+  // Handle threshold changes for uploaded files
+  useEffect(() => {
+    if (grid && canvasRef.current && uploadedFile) {
+      reprocessImage()
+    }
+  }, [threshold, uploadedFile, reprocessImage])
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
