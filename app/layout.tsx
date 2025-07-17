@@ -16,6 +16,7 @@ export default function RootLayout({
       <head>
         <meta property="og:image" content="https://checksketch.vercel.app/og.png" />
       </head>
+      <Analytics />
       <body>{children}</body>
     </html>
   )
