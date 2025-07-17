@@ -40,6 +40,9 @@ export default function CheckboxSketchTool() {
   const [exportProgress, setExportProgress] = useState(0)
   const [processingProgress, setProcessingProgress] = useState(0)
 
+  // Store original video frames for reprocessing
+  const [originalVideoFrames, setOriginalVideoFrames] = useState<{ imageData: ImageData; timestamp: number; frameIndex: number }[]>([])
+
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const checkboxGridRef = useRef<HTMLDivElement>(null)
@@ -287,6 +290,7 @@ export default function CheckboxSketchTool() {
     setIsProcessing(true)
     setIsVideo(true)
     setVideoFrames([])
+    setOriginalVideoFrames([]) // Clear original frames
     setCurrentFrameIndex(0)
     setIsPlaying(false)
     setProcessingProgress(0)
@@ -303,8 +307,9 @@ export default function CheckboxSketchTool() {
       }
     })
 
-    // Simple frame extraction for now
-    const frames: VideoFrame[] = []
+    // Extract and store original frames
+    const originalFrames: { imageData: ImageData; timestamp: number; frameIndex: number }[] = []
+    const processedFrames: VideoFrame[] = []
     const frameInterval = 1000 / fps
     const totalFrames = Math.floor(video.duration * fps)
 
@@ -348,8 +353,16 @@ export default function CheckboxSketchTool() {
           ctx.drawImage(video, 0, 0, canvasWidth, canvasHeight)
 
           const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight)
-          const data = imageData.data
 
+          // Store original frame
+          originalFrames.push({
+            imageData,
+            timestamp,
+            frameIndex: i
+          })
+
+          // Process frame with current threshold
+          const data = imageData.data
           const grid: boolean[][] = []
 
           for (let y = 0; y < canvasHeight; y++) {
@@ -368,7 +381,7 @@ export default function CheckboxSketchTool() {
             grid.push(row)
           }
 
-          frames.push({
+          processedFrames.push({
             grid: {
               rows: canvasHeight,
               cols: canvasWidth,
@@ -384,40 +397,49 @@ export default function CheckboxSketchTool() {
       })
     }
 
-    setVideoFrames(frames)
-    if (frames.length > 0) {
-      setGrid(frames[0].grid)
+    setOriginalVideoFrames(originalFrames)
+    setVideoFrames(processedFrames)
+    if (processedFrames.length > 0) {
+      setGrid(processedFrames[0].grid)
     }
     setIsProcessing(false)
     setProcessingProgress(0)
   }, [fps, resolution, threshold, maintainAspectRatio])
 
+  // Optimized playback using direct DOM manipulation
   const playVideo = useCallback(() => {
     if (videoFrames.length === 0) return
 
     setIsPlaying(true)
     let startTime = Date.now()
     const frameInterval = 1000 / fps
+    let isPlayingRef = true // Use ref to avoid dependency issues
 
     const animate = () => {
+      if (!isPlayingRef) return // Check local ref instead of state
+
       const elapsed = Date.now() - startTime
       const frameIndex = Math.floor((elapsed / frameInterval) % videoFrames.length)
 
       setCurrentFrameIndex(frameIndex)
       setGrid(videoFrames[frameIndex].grid)
 
-      if (isPlaying) {
-        animationFrameRef.current = requestAnimationFrame(animate)
-      }
+      animationFrameRef.current = requestAnimationFrame(animate)
     }
 
     animate()
-  }, [videoFrames, fps, isPlaying])
+
+    // Return cleanup function
+    return () => {
+      isPlayingRef = false
+    }
+  }, [videoFrames, fps]) // Removed isPlaying from dependencies
 
   const pauseVideo = useCallback(() => {
     setIsPlaying(false)
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = undefined
     }
   }, [])
 
@@ -593,55 +615,22 @@ export default function CheckboxSketchTool() {
     }
   }, [resolution, maintainAspectRatio, uploadedFile])
 
-  // Handle threshold changes for uploaded files (both images and videos)
-  useEffect(() => {
-    if (uploadedFile && grid) {
-      if (isVideo && videoFrames.length > 0) {
-        // Reprocess video frames with new threshold
-        reprocessVideoWithNewThreshold()
-      } else {
-        // Reprocess image with new threshold
-        reprocessImage()
-      }
-    }
-  }, [threshold, uploadedFile, isVideo, videoFrames.length])
-
   // Function to reprocess video frames with new threshold
   const reprocessVideoWithNewThreshold = useCallback(() => {
-    if (videoFrames.length === 0) return
+    if (originalVideoFrames.length === 0) return
 
-    const reprocessedFrames: VideoFrame[] = videoFrames.map(frame => {
-      // Create a temporary canvas to reprocess the frame
-      const canvas = document.createElement('canvas')
-      const ctx = canvas.getContext('2d')!
+    console.log('Reprocessing video frames with threshold:', threshold)
 
-      // Set canvas size to match the frame grid
-      canvas.width = frame.grid.cols
-      canvas.height = frame.grid.rows
-
-      // Draw the current frame as pixels
-      ctx.fillStyle = "#ffffff"
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-      ctx.fillStyle = "#000000"
-      for (let y = 0; y < frame.grid.rows; y++) {
-        for (let x = 0; x < frame.grid.cols; x++) {
-          if (frame.grid.data[y][x]) {
-            ctx.fillRect(x, y, 1, 1)
-          }
-        }
-      }
-
-      // Get image data and reprocess with new threshold
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const reprocessedFrames: VideoFrame[] = originalVideoFrames.map(originalFrame => {
+      const { imageData, timestamp, frameIndex } = originalFrame
       const data = imageData.data
 
       const newGrid: boolean[][] = []
 
-      for (let y = 0; y < canvas.height; y++) {
+      for (let y = 0; y < imageData.height; y++) {
         const row: boolean[] = []
-        for (let x = 0; x < canvas.width; x++) {
-          const index = (y * canvas.width + x) * 4
+        for (let x = 0; x < imageData.width; x++) {
+          const index = (y * imageData.width + x) * 4
           const r = data[index]
           const g = data[index + 1]
           const b = data[index + 2]
@@ -655,22 +644,36 @@ export default function CheckboxSketchTool() {
       }
 
       return {
-        ...frame,
         grid: {
-          rows: canvas.height,
-          cols: canvas.width,
+          rows: imageData.height,
+          cols: imageData.width,
           data: newGrid
-        }
+        },
+        timestamp,
+        frameIndex
       }
     })
 
     setVideoFrames(reprocessedFrames)
 
-    // Update current frame if playing
+    // Update current frame
     if (currentFrameIndex < reprocessedFrames.length) {
       setGrid(reprocessedFrames[currentFrameIndex].grid)
     }
-  }, [videoFrames, threshold, currentFrameIndex])
+  }, [originalVideoFrames, threshold, currentFrameIndex])
+
+  // Handle threshold changes for uploaded files (both images and videos)
+  useEffect(() => {
+    if (uploadedFile && grid) {
+      if (isVideo && videoFrames.length > 0) {
+        // Reprocess video frames with new threshold
+        reprocessVideoWithNewThreshold()
+      } else if (!isVideo) {
+        // Reprocess image with new threshold
+        reprocessImage()
+      }
+    }
+  }, [threshold, uploadedFile, isVideo, videoFrames.length, reprocessVideoWithNewThreshold, reprocessImage])
 
   // Separate useEffect for placeholder threshold changes
   useEffect(() => {
@@ -708,6 +711,15 @@ export default function CheckboxSketchTool() {
       })
     }
   }, [threshold, uploadedFile])
+
+  // Update the play button click handler
+  const handlePlayClick = useCallback(() => {
+    if (isPlaying) {
+      pauseVideo()
+    } else {
+      playVideo()
+    }
+  }, [isPlaying, playVideo, pauseVideo])
 
   // Cleanup animation frame on unmount
   useEffect(() => {
@@ -859,7 +871,7 @@ export default function CheckboxSketchTool() {
                 {/* Playback Controls */}
                 <div className="flex gap-2">
                   <Button
-                    onClick={isPlaying ? pauseVideo : playVideo}
+                    onClick={handlePlayClick}
                     variant="outline"
                     size="sm"
                   >
