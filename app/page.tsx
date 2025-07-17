@@ -466,26 +466,45 @@ export default function CheckboxSketchTool() {
 
     mediaRecorder.start()
 
-    for (let i = 0; i < videoFrames.length; i++) {
-      const frame = videoFrames[i]
+    // Use requestAnimationFrame for precise timing
+    const frameInterval = 1000 / fps
+    let frameIndex = 0
+    let lastFrameTime = 0
 
-      ctx.fillStyle = "#ffffff"
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-      ctx.fillStyle = "#000000"
-      for (let y = 0; y < frame.grid.rows; y++) {
-        for (let x = 0; x < frame.grid.cols; x++) {
-          if (frame.grid.data[y][x]) {
-            ctx.fillRect(x * exportSize, y * exportSize, exportSize, exportSize)
-          }
-        }
+    const renderFrame = (currentTime: number) => {
+      if (frameIndex >= videoFrames.length) {
+        mediaRecorder.stop()
+        return
       }
 
-      setExportProgress((i / videoFrames.length) * 100)
-      await new Promise(resolve => setTimeout(resolve, 1000 / fps))
+      // Check if enough time has passed for the next frame
+      if (currentTime - lastFrameTime >= frameInterval) {
+        const frame = videoFrames[frameIndex]
+
+        // Clear canvas
+        ctx.fillStyle = "#ffffff"
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+        // Draw checkboxes
+        ctx.fillStyle = "#000000"
+        for (let y = 0; y < frame.grid.rows; y++) {
+          for (let x = 0; x < frame.grid.cols; x++) {
+            if (frame.grid.data[y][x]) {
+              ctx.fillRect(x * exportSize, y * exportSize, exportSize, exportSize)
+            }
+          }
+        }
+
+        setExportProgress((frameIndex / videoFrames.length) * 100)
+
+        frameIndex++
+        lastFrameTime = currentTime
+      }
+
+      requestAnimationFrame(renderFrame)
     }
 
-    mediaRecorder.stop()
+    requestAnimationFrame(renderFrame)
   }, [videoFrames, fps, exportSize])
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -574,12 +593,121 @@ export default function CheckboxSketchTool() {
     }
   }, [resolution, maintainAspectRatio, uploadedFile])
 
-  // Handle threshold changes for uploaded files
+  // Handle threshold changes for uploaded files (both images and videos)
   useEffect(() => {
-    if (grid && canvasRef.current && uploadedFile) {
-      reprocessImage()
+    if (uploadedFile && grid) {
+      if (isVideo && videoFrames.length > 0) {
+        // Reprocess video frames with new threshold
+        reprocessVideoWithNewThreshold()
+      } else {
+        // Reprocess image with new threshold
+        reprocessImage()
+      }
     }
-  }, [threshold, uploadedFile, reprocessImage])
+  }, [threshold, uploadedFile, isVideo, videoFrames.length])
+
+  // Function to reprocess video frames with new threshold
+  const reprocessVideoWithNewThreshold = useCallback(() => {
+    if (videoFrames.length === 0) return
+
+    const reprocessedFrames: VideoFrame[] = videoFrames.map(frame => {
+      // Create a temporary canvas to reprocess the frame
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')!
+
+      // Set canvas size to match the frame grid
+      canvas.width = frame.grid.cols
+      canvas.height = frame.grid.rows
+
+      // Draw the current frame as pixels
+      ctx.fillStyle = "#ffffff"
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+      ctx.fillStyle = "#000000"
+      for (let y = 0; y < frame.grid.rows; y++) {
+        for (let x = 0; x < frame.grid.cols; x++) {
+          if (frame.grid.data[y][x]) {
+            ctx.fillRect(x, y, 1, 1)
+          }
+        }
+      }
+
+      // Get image data and reprocess with new threshold
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const data = imageData.data
+
+      const newGrid: boolean[][] = []
+
+      for (let y = 0; y < canvas.height; y++) {
+        const row: boolean[] = []
+        for (let x = 0; x < canvas.width; x++) {
+          const index = (y * canvas.width + x) * 4
+          const r = data[index]
+          const g = data[index + 1]
+          const b = data[index + 2]
+
+          const grayscale = (r + g + b) / 3
+          const isDark = grayscale < threshold
+
+          row.push(isDark)
+        }
+        newGrid.push(row)
+      }
+
+      return {
+        ...frame,
+        grid: {
+          rows: canvas.height,
+          cols: canvas.width,
+          data: newGrid
+        }
+      }
+    })
+
+    setVideoFrames(reprocessedFrames)
+
+    // Update current frame if playing
+    if (currentFrameIndex < reprocessedFrames.length) {
+      setGrid(reprocessedFrames[currentFrameIndex].grid)
+    }
+  }, [videoFrames, threshold, currentFrameIndex])
+
+  // Separate useEffect for placeholder threshold changes
+  useEffect(() => {
+    if (!uploadedFile && grid && canvasRef.current) {
+      // Only reprocess placeholder when threshold changes and no file is uploaded
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext("2d")
+      if (!ctx) return
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const data = imageData.data
+
+      const newGrid: boolean[][] = []
+
+      for (let y = 0; y < canvas.height; y++) {
+        const row: boolean[] = []
+        for (let x = 0; x < canvas.width; x++) {
+          const index = (y * canvas.width + x) * 4
+          const r = data[index]
+          const g = data[index + 1]
+          const b = data[index + 2]
+
+          const grayscale = (r + g + b) / 3
+          const isDark = grayscale < threshold
+
+          row.push(isDark)
+        }
+        newGrid.push(row)
+      }
+
+      setGrid({
+        rows: canvas.height,
+        cols: canvas.width,
+        data: newGrid,
+      })
+    }
+  }, [threshold, uploadedFile])
 
   // Cleanup animation frame on unmount
   useEffect(() => {
