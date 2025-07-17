@@ -15,6 +15,9 @@ export default function RootLayout({
     <html lang="en">
       <head>
         <meta property="og:image" content="https://checksketch.vercel.app/og.png" />
+        <meta property="twitter:card" content="https://checksketch.vercel.app/og.png" />
+        <meta property="twitter:title" content="CheckSketch" />
+        <meta property="og:site_name" content="CheckSketch" />
       </head>
       <Analytics />
       <body>{children}</body>
