@@ -14,6 +14,12 @@ interface CheckboxGrid {
   data: boolean[][]
 }
 
+interface VideoFrame {
+  grid: CheckboxGrid
+  timestamp: number
+  frameIndex: number
+}
+
 export default function CheckboxSketchTool() {
   const [resolution, setResolution] = useState<number>(80)
   const [threshold, setThreshold] = useState<number>(150)
@@ -22,14 +28,37 @@ export default function CheckboxSketchTool() {
   const [exportSize, setExportSize] = useState<number>(8)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [maintainAspectRatio, setMaintainAspectRatio] = useState<boolean>(true)
+
+  // Video states
+  const [isVideo, setIsVideo] = useState(false)
+  const [videoFrames, setVideoFrames] = useState<VideoFrame[]>([])
+  const [currentFrameIndex, setCurrentFrameIndex] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [videoDuration, setVideoDuration] = useState(0)
+  const [fps, setFps] = useState(30)
+  const [isExportingVideo, setIsExportingVideo] = useState(false)
+  const [exportProgress, setExportProgress] = useState(0)
+  const [processingProgress, setProcessingProgress] = useState(0)
+
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const checkboxGridRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const animationFrameRef = useRef<number>()
+  const videoCanvasRef = useRef<HTMLCanvasElement>(null)
+  const workerRef = useRef<Worker>()
+
+  // Initialize Web Worker
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // For now, let's use a simpler approach without Web Workers to get it working
+      // We'll add Web Workers in the next iteration
+    }
+  }, [])
 
   const processImage = useCallback(
     (file: File) => {
       setIsProcessing(true)
-      // Clear any existing grid (including placeholder)
       setGrid(null)
 
       const img = new Image()
@@ -46,37 +75,28 @@ export default function CheckboxSketchTool() {
         let canvasHeight = resolution
 
         if (maintainAspectRatio) {
-          // Calculate dimensions to maintain aspect ratio
           const imgAspectRatio = img.width / img.height
-          const targetAspectRatio = 1 // square
+          const targetAspectRatio = 1
 
           if (imgAspectRatio > targetAspectRatio) {
-            // Image is wider than square
             canvasWidth = resolution
             canvasHeight = Math.round(resolution / imgAspectRatio)
           } else {
-            // Image is taller than square
             canvasWidth = Math.round(resolution * imgAspectRatio)
             canvasHeight = resolution
           }
         }
 
-        // Set canvas size
         canvas.width = canvasWidth
         canvas.height = canvasHeight
 
-        // Clear canvas with white background
         ctx.fillStyle = "#ffffff"
         ctx.fillRect(0, 0, canvasWidth, canvasHeight)
-
-        // Draw and scale image to canvas
         ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight)
 
-        // Get image data
         const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight)
         const data = imageData.data
 
-        // Convert to checkbox grid (inverted logic)
         const newGrid: boolean[][] = []
 
         for (let y = 0; y < canvasHeight; y++) {
@@ -87,7 +107,6 @@ export default function CheckboxSketchTool() {
             const g = data[index + 1]
             const b = data[index + 2]
 
-            // Convert to grayscale and determine if it's dark (inverted)
             const grayscale = (r + g + b) / 3
             const isDark = grayscale < threshold
 
@@ -116,11 +135,9 @@ export default function CheckboxSketchTool() {
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
-    // Get existing image data
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
     const data = imageData.data
 
-    // Convert to checkbox grid with new threshold
     const newGrid: boolean[][] = []
 
     for (let y = 0; y < canvas.height; y++) {
@@ -177,6 +194,8 @@ export default function CheckboxSketchTool() {
   const clearGrid = useCallback(() => {
     setGrid(null)
     setUploadedFile(null)
+    setIsVideo(false)
+    setVideoFrames([])
   }, [])
 
   const autoOptimizeThreshold = useCallback(() => {
@@ -186,12 +205,11 @@ export default function CheckboxSketchTool() {
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
-    const imageData = ctx.getImageData(0, 0, resolution, resolution)
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
     const data = imageData.data
 
-    // Calculate average brightness
     let totalBrightness = 0
-    const pixelCount = resolution * resolution
+    const pixelCount = canvas.width * canvas.height
 
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i]
@@ -203,7 +221,7 @@ export default function CheckboxSketchTool() {
 
     const averageBrightness = totalBrightness / pixelCount
     setThreshold(Math.round(averageBrightness))
-  }, [resolution])
+  }, [])
 
   const saveAsImage = useCallback(() => {
     if (!grid) return
@@ -215,11 +233,9 @@ export default function CheckboxSketchTool() {
     canvas.width = grid.cols * exportSize
     canvas.height = grid.rows * exportSize
 
-    // Fill background (unchecked boxes)
     ctx.fillStyle = "#ffffff"
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Draw checked boxes
     ctx.fillStyle = "#000000"
     for (let y = 0; y < grid.rows; y++) {
       for (let x = 0; x < grid.cols; x++) {
@@ -229,7 +245,6 @@ export default function CheckboxSketchTool() {
       }
     }
 
-    // Download the image
     canvas.toBlob((blob) => {
       if (blob) {
         const url = URL.createObjectURL(blob)
@@ -248,7 +263,7 @@ export default function CheckboxSketchTool() {
     try {
       const canvas = await html2canvas(checkboxGridRef.current, {
         backgroundColor: "#f9f9f9",
-        scale: 2, // Higher resolution
+        scale: 2,
         useCORS: true,
       })
 
@@ -267,11 +282,223 @@ export default function CheckboxSketchTool() {
     }
   }, [grid])
 
+  // Simple video processing without Web Workers for now
+  const processVideo = useCallback(async (file: File) => {
+    setIsProcessing(true)
+    setIsVideo(true)
+    setVideoFrames([])
+    setCurrentFrameIndex(0)
+    setIsPlaying(false)
+    setProcessingProgress(0)
+
+    const video = videoRef.current
+    if (!video) return
+
+    video.src = URL.createObjectURL(file)
+
+    await new Promise<void>((resolve) => {
+      video.onloadedmetadata = () => {
+        setVideoDuration(video.duration)
+        resolve()
+      }
+    })
+
+    // Simple frame extraction for now
+    const frames: VideoFrame[] = []
+    const frameInterval = 1000 / fps
+    const totalFrames = Math.floor(video.duration * fps)
+
+    for (let i = 0; i < totalFrames; i++) {
+      const timestamp = (i * frameInterval) / 1000
+      video.currentTime = timestamp
+
+      await new Promise<void>((resolve) => {
+        video.onseeked = () => {
+          const canvas = videoCanvasRef.current
+          if (!canvas) {
+            resolve()
+            return
+          }
+
+          const ctx = canvas.getContext("2d")
+          if (!ctx) {
+            resolve()
+            return
+          }
+
+          let canvasWidth = resolution
+          let canvasHeight = resolution
+
+          if (maintainAspectRatio) {
+            const videoAspectRatio = video.videoWidth / video.videoHeight
+            if (videoAspectRatio > 1) {
+              canvasWidth = resolution
+              canvasHeight = Math.round(resolution / videoAspectRatio)
+            } else {
+              canvasWidth = Math.round(resolution * videoAspectRatio)
+              canvasHeight = resolution
+            }
+          }
+
+          canvas.width = canvasWidth
+          canvas.height = canvasHeight
+
+          ctx.fillStyle = "#ffffff"
+          ctx.fillRect(0, 0, canvasWidth, canvasHeight)
+          ctx.drawImage(video, 0, 0, canvasWidth, canvasHeight)
+
+          const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight)
+          const data = imageData.data
+
+          const grid: boolean[][] = []
+
+          for (let y = 0; y < canvasHeight; y++) {
+            const row: boolean[] = []
+            for (let x = 0; x < canvasWidth; x++) {
+              const index = (y * canvasWidth + x) * 4
+              const r = data[index]
+              const g = data[index + 1]
+              const b = data[index + 2]
+
+              const grayscale = (r + g + b) / 3
+              const isDark = grayscale < threshold
+
+              row.push(isDark)
+            }
+            grid.push(row)
+          }
+
+          frames.push({
+            grid: {
+              rows: canvasHeight,
+              cols: canvasWidth,
+              data: grid,
+            },
+            timestamp,
+            frameIndex: i
+          })
+
+          setProcessingProgress((i / totalFrames) * 100)
+          resolve()
+        }
+      })
+    }
+
+    setVideoFrames(frames)
+    if (frames.length > 0) {
+      setGrid(frames[0].grid)
+    }
+    setIsProcessing(false)
+    setProcessingProgress(0)
+  }, [fps, resolution, threshold, maintainAspectRatio])
+
+  const playVideo = useCallback(() => {
+    if (videoFrames.length === 0) return
+
+    setIsPlaying(true)
+    let startTime = Date.now()
+    const frameInterval = 1000 / fps
+
+    const animate = () => {
+      const elapsed = Date.now() - startTime
+      const frameIndex = Math.floor((elapsed / frameInterval) % videoFrames.length)
+
+      setCurrentFrameIndex(frameIndex)
+      setGrid(videoFrames[frameIndex].grid)
+
+      if (isPlaying) {
+        animationFrameRef.current = requestAnimationFrame(animate)
+      }
+    }
+
+    animate()
+  }, [videoFrames, fps, isPlaying])
+
+  const pauseVideo = useCallback(() => {
+    setIsPlaying(false)
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+    }
+  }, [])
+
+  const seekToFrame = useCallback((frameIndex: number) => {
+    if (frameIndex >= 0 && frameIndex < videoFrames.length) {
+      setCurrentFrameIndex(frameIndex)
+      setGrid(videoFrames[frameIndex].grid)
+    }
+  }, [videoFrames])
+
+  const exportVideo = useCallback(async () => {
+    if (videoFrames.length === 0) return
+
+    setIsExportingVideo(true)
+    setExportProgress(0)
+
+    const canvas = document.createElement("canvas")
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    const firstFrame = videoFrames[0].grid
+    canvas.width = firstFrame.cols * exportSize
+    canvas.height = firstFrame.rows * exportSize
+
+    const stream = canvas.captureStream(fps)
+    const mediaRecorder = new MediaRecorder(stream, {
+      mimeType: "video/webm;codecs=vp9"
+    })
+
+    const chunks: Blob[] = []
+    mediaRecorder.ondataavailable = (event) => {
+      chunks.push(event.data)
+    }
+
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(chunks, { type: "video/webm" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = "checkbox-video.webm"
+      a.click()
+      URL.revokeObjectURL(url)
+      setIsExportingVideo(false)
+      setExportProgress(0)
+    }
+
+    mediaRecorder.start()
+
+    for (let i = 0; i < videoFrames.length; i++) {
+      const frame = videoFrames[i]
+
+      ctx.fillStyle = "#ffffff"
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+      ctx.fillStyle = "#000000"
+      for (let y = 0; y < frame.grid.rows; y++) {
+        for (let x = 0; x < frame.grid.cols; x++) {
+          if (frame.grid.data[y][x]) {
+            ctx.fillRect(x * exportSize, y * exportSize, exportSize, exportSize)
+          }
+        }
+      }
+
+      setExportProgress((i / videoFrames.length) * 100)
+      await new Promise(resolve => setTimeout(resolve, 1000 / fps))
+    }
+
+    mediaRecorder.stop()
+  }, [videoFrames, fps, exportSize])
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
-    if (file && file.type.startsWith("image/")) {
+    if (!file) return
+
+    if (file.type.startsWith("image/")) {
+      setIsVideo(false)
       setUploadedFile(file)
       processImage(file)
+    } else if (file.type.startsWith("video/")) {
+      setUploadedFile(file)
+      processVideo(file)
     }
   }
 
@@ -296,37 +523,28 @@ export default function CheckboxSketchTool() {
         let canvasHeight = resolution
 
         if (maintainAspectRatio) {
-          // Calculate dimensions to maintain aspect ratio
           const imgAspectRatio = img.width / img.height
-          const targetAspectRatio = 1 // square
+          const targetAspectRatio = 1
 
           if (imgAspectRatio > targetAspectRatio) {
-            // Image is wider than square
             canvasWidth = resolution
             canvasHeight = Math.round(resolution / imgAspectRatio)
           } else {
-            // Image is taller than square
             canvasWidth = Math.round(resolution * imgAspectRatio)
             canvasHeight = resolution
           }
         }
 
-        // Set canvas size
         canvas.width = canvasWidth
         canvas.height = canvasHeight
 
-        // Clear canvas with white background
         ctx.fillStyle = "#ffffff"
         ctx.fillRect(0, 0, canvasWidth, canvasHeight)
-
-        // Draw and scale image to canvas
         ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight)
 
-        // Get image data
         const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight)
         const data = imageData.data
 
-        // Convert to checkbox grid (inverted logic)
         const newGrid: boolean[][] = []
 
         for (let y = 0; y < canvasHeight; y++) {
@@ -337,7 +555,6 @@ export default function CheckboxSketchTool() {
             const g = data[index + 1]
             const b = data[index + 2]
 
-            // Convert to grayscale and determine if it's dark (inverted)
             const grayscale = (r + g + b) / 3
             const isDark = grayscale < threshold
 
@@ -355,46 +572,7 @@ export default function CheckboxSketchTool() {
 
       img.src = "/rickroll.jpg"
     }
-  }, [resolution, maintainAspectRatio, uploadedFile]) // Removed threshold from dependencies
-
-  // Separate useEffect for threshold changes
-  useEffect(() => {
-    if (grid && canvasRef.current && !uploadedFile) {
-      // Only reprocess placeholder when threshold changes and no file is uploaded
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext("2d")
-      if (!ctx) return
-
-      // Get existing image data
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-      const data = imageData.data
-
-      // Convert to checkbox grid with new threshold
-      const newGrid: boolean[][] = []
-
-      for (let y = 0; y < canvas.height; y++) {
-        const row: boolean[] = []
-        for (let x = 0; x < canvas.width; x++) {
-          const index = (y * canvas.width + x) * 4
-          const r = data[index]
-          const g = data[index + 1]
-          const b = data[index + 2]
-
-          const grayscale = (r + g + b) / 3
-          const isDark = grayscale < threshold
-
-          row.push(isDark)
-        }
-        newGrid.push(row)
-      }
-
-      setGrid({
-        rows: canvas.height,
-        cols: canvas.width,
-        data: newGrid,
-      })
-    }
-  }, [threshold, uploadedFile])
+  }, [resolution, maintainAspectRatio, uploadedFile])
 
   // Handle threshold changes for uploaded files
   useEffect(() => {
@@ -403,18 +581,34 @@ export default function CheckboxSketchTool() {
     }
   }, [threshold, uploadedFile, reprocessImage])
 
+  // Cleanup animation frame on unmount
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+    }
+  }, [])
+
   return (
     <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Checkbox Sketch Tool</h1>
-          <p className="text-gray-600">Upload an image and convert it to a checkbox sketch</p>
+          <p className="text-gray-600">Upload an image or video and convert it to a checkbox sketch</p>
         </div>
 
         <Card className="p-6 mb-8">
           <div className="flex flex-col items-center gap-4">
-            <Input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+            <Input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,video/*"
+              onChange={handleFileChange}
+              className="hidden"
+            />
 
+            {/* Resolution Controls */}
             <div className="flex flex-col items-center gap-2">
               <label className="text-sm font-medium">Resolution</label>
               <div className="flex gap-2">
@@ -430,6 +624,7 @@ export default function CheckboxSketchTool() {
               </div>
             </div>
 
+            {/* Aspect Ratio Controls */}
             <div className="flex flex-col items-center gap-2">
               <label className="text-sm font-medium">Aspect Ratio</label>
               <div className="flex gap-2">
@@ -450,6 +645,25 @@ export default function CheckboxSketchTool() {
               </div>
             </div>
 
+            {/* Video FPS Control */}
+            {isVideo && (
+              <div className="flex flex-col items-center gap-2">
+                <label className="text-sm font-medium">Video FPS</label>
+                <div className="flex gap-2">
+                  <Button variant={fps === 15 ? "default" : "outline"} size="sm" onClick={() => setFps(15)}>
+                    15 FPS
+                  </Button>
+                  <Button variant={fps === 30 ? "default" : "outline"} size="sm" onClick={() => setFps(30)}>
+                    30 FPS
+                  </Button>
+                  <Button variant={fps === 60 ? "default" : "outline"} size="sm" onClick={() => setFps(60)}>
+                    60 FPS
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Brightness Threshold */}
             <div className="flex flex-col items-center gap-2">
               <label className="text-sm font-medium">Brightness Threshold</label>
               <div className="flex items-center gap-3 w-full max-w-xs">
@@ -474,10 +688,67 @@ export default function CheckboxSketchTool() {
               </div>
             </div>
 
+            {/* Processing Progress */}
+            {isProcessing && (
+              <div className="w-full max-w-md">
+                <div className="flex justify-between text-sm mb-2">
+                  <span>Processing {isVideo ? 'video' : 'image'}...</span>
+                  <span>{Math.round(processingProgress)}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${processingProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Upload Button */}
             <Button onClick={handleUploadClick} disabled={isProcessing} size="lg">
-              {isProcessing ? "Processing..." : "Upload Image"}
+              {isProcessing ? "Processing..." : "Upload Image/Video"}
             </Button>
 
+            {/* Video Controls */}
+            {isVideo && videoFrames.length > 0 && (
+              <div className="flex flex-col items-center gap-4 w-full max-w-md">
+                {/* Video Timeline */}
+                <div className="w-full">
+                  <input
+                    type="range"
+                    min="0"
+                    max={videoFrames.length - 1}
+                    value={currentFrameIndex}
+                    onChange={(e) => seekToFrame(Number(e.target.value))}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>Frame {currentFrameIndex + 1} / {videoFrames.length}</span>
+                    <span>{((currentFrameIndex / videoFrames.length) * videoDuration).toFixed(1)}s / {videoDuration.toFixed(1)}s</span>
+                  </div>
+                </div>
+
+                {/* Playback Controls */}
+                <div className="flex gap-2">
+                  <Button
+                    onClick={isPlaying ? pauseVideo : playVideo}
+                    variant="outline"
+                    size="sm"
+                  >
+                    {isPlaying ? "Pause" : "Play"}
+                  </Button>
+                  <Button
+                    onClick={() => seekToFrame(0)}
+                    variant="outline"
+                    size="sm"
+                  >
+                    Reset
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
             {grid && (
               <div className="flex flex-wrap gap-2 justify-center">
                 <Button onClick={invertColors} variant="outline" size="sm">
@@ -504,16 +775,29 @@ export default function CheckboxSketchTool() {
                 <Button onClick={saveAsCheckboxImage} variant="outline" size="sm">
                   Save as Checkboxes
                 </Button>
+                {isVideo && (
+                  <Button
+                    onClick={exportVideo}
+                    variant="outline"
+                    size="sm"
+                    disabled={isExportingVideo}
+                  >
+                    {isExportingVideo ? `Exporting ${Math.round(exportProgress)}%` : "Export Video"}
+                  </Button>
+                )}
               </div>
             )}
 
-            <p className="text-sm text-gray-500">Supports JPG, PNG, GIF, WebP</p>
+            <p className="text-sm text-gray-500">Supports JPG, PNG, GIF, WebP, MP4, WebM, MOV</p>
           </div>
         </Card>
 
+        {/* Checkbox Grid Display */}
         {grid && (
           <Card className="p-6">
-            <h2 className="text-xl font-semibold mb-4 text-center">Checkbox Sketch</h2>
+            <h2 className="text-xl font-semibold mb-4 text-center">
+              {isVideo ? "Video Checkbox Sketch" : "Checkbox Sketch"}
+            </h2>
             <div className="overflow-auto">
               <div className="flex justify-center">
                 <div
@@ -540,14 +824,18 @@ export default function CheckboxSketchTool() {
               </div>
             </div>
             <p className="text-sm text-gray-500 text-center mt-4">
-              {!canvasRef.current
-                ? "Example placeholder pattern • Upload an image to get started"
-                : "Click checkboxes to manually edit • Checked = dark pixels, unchecked = background"}
+              {isVideo
+                ? `Frame ${currentFrameIndex + 1} of ${videoFrames.length} • Click checkboxes to edit current frame`
+                : "Click checkboxes to manually edit • Checked = dark pixels, unchecked = background"
+              }
             </p>
           </Card>
         )}
 
+        {/* Hidden elements */}
         <canvas ref={canvasRef} className="hidden" />
+        <canvas ref={videoCanvasRef} className="hidden" />
+        <video ref={videoRef} className="hidden" />
       </div>
     </div>
   )
